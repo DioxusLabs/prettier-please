@@ -1,12 +1,21 @@
-prettyplease::unparse
+# prettyplease-macro-fmt::unparse
 =====================
+
+
+
+<!-- prettyplease::unparse  -->
+<!-- ===================== -->
 
 [<img alt="github" src="https://img.shields.io/badge/github-dtolnay/prettyplease-8da0cb?style=for-the-badge&labelColor=555555&logo=github" height="20">](https://github.com/dtolnay/prettyplease)
 [<img alt="crates.io" src="https://img.shields.io/crates/v/prettyplease.svg?style=for-the-badge&color=fc8d62&logo=rust" height="20">](https://crates.io/crates/prettyplease)
 [<img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-prettyplease-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs" height="20">](https://docs.rs/prettyplease)
 [<img alt="build status" src="https://img.shields.io/github/workflow/status/dtolnay/prettyplease/CI/master?style=for-the-badge" height="20">](https://github.com/dtolnay/prettyplease/actions?query=branch%3Amaster)
 
-A minimal `syn` syntax tree pretty-printer.
+A minimal `syn` syntax tree pretty-printer with hooks for formatting procedural macros.
+
+This crate provides functionality to pretty-print your procedural macros and any captured Rust code.
+
+This is intended for macros like Dioxus' `rsx!` and Yew's `html!` to properly format their captured Rust code.
 
 <br>
 
@@ -47,17 +56,17 @@ Here are a few superficial comparisons of this crate against the AST
 pretty-printer built into rustc, and rustfmt. The sections below go into more
 detail comparing the output of each of these libraries.
 
-| | prettyplease | rustc | rustfmt |
-| --- | --- | --- | --- |
-| non-pathological behavior on big or generated code | ✔️ | ❌ | ❌ |
-| idiomatic modern formatting ("locally indistinguishable from rustfmt") | ✔️ | ❌ | ✔️ |
-| throughput | 60 MB/s | 39 MB/s | 2.8 MB/s |
-| number of dependencies | 3 | 72 | 66 |
-| compile time including dependencies | 2.4 sec | 23.1 sec | 29.8 sec |
-| buildable using a stable Rust compiler | ✔️ | ❌ | ❌ |
-| published to crates.io | ✔️ | ❌ | ❌ |
-| extensively configurable output | ❌ | ❌ | ✔️ |
-| intended to accommodate hand-maintained source code | ❌ | ❌ | ✔️ |
+|                                                                        | prettyplease | rustc    | rustfmt  |
+| ---------------------------------------------------------------------- | ------------ | -------- | -------- |
+| non-pathological behavior on big or generated code                     | ✔️            | ❌        | ❌        |
+| idiomatic modern formatting ("locally indistinguishable from rustfmt") | ✔️            | ❌        | ✔️        |
+| throughput                                                             | 60 MB/s      | 39 MB/s  | 2.8 MB/s |
+| number of dependencies                                                 | 3            | 72       | 66       |
+| compile time including dependencies                                    | 2.4 sec      | 23.1 sec | 29.8 sec |
+| buildable using a stable Rust compiler                                 | ✔️            | ❌        | ❌        |
+| published to crates.io                                                 | ✔️            | ❌        | ❌        |
+| extensively configurable output                                        | ❌            | ❌        | ✔️        |
+| intended to accommodate hand-maintained source code                    | ❌            | ❌        | ✔️        |
 
 <br>
 

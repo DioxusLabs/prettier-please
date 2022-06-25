@@ -359,7 +359,7 @@ mod token;
 mod ty;
 
 use crate::algorithm::Printer;
-use syn::File;
+use syn::{Expr, File};
 
 // Target line width.
 const MARGIN: isize = 89;
@@ -373,5 +373,11 @@ const MIN_SPACE: isize = 60;
 pub fn unparse(file: &File) -> String {
     let mut p = Printer::new();
     p.file(file);
+    p.eof()
+}
+
+pub fn unparse_expr(file: &Expr) -> String {
+    let mut p = Printer::new();
+    p.expr(file);
     p.eof()
 }
