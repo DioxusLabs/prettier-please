@@ -1,10 +1,7 @@
-# prettyplease-macro-fmt::unparse
+# Prettier Please
 =====================
 
 
-
-<!-- prettyplease::unparse  -->
-<!-- ===================== -->
 
 [<img alt="github" src="https://img.shields.io/badge/github-dtolnay/prettyplease-8da0cb?style=for-the-badge&labelColor=555555&logo=github" height="20">](https://github.com/dtolnay/prettyplease)
 [<img alt="crates.io" src="https://img.shields.io/crates/v/prettyplease.svg?style=for-the-badge&color=fc8d62&logo=rust" height="20">](https://crates.io/crates/prettyplease)
@@ -16,6 +13,10 @@ A minimal `syn` syntax tree pretty-printer with hooks for formatting procedural 
 This crate provides functionality to pretty-print your procedural macros and any captured Rust code.
 
 This is intended for macros like Dioxus' `rsx!` and Yew's `html!` to properly format their captured Rust code.
+
+This crate diverges from Dtonlay's prettyplease in that it is trying to be as close to Rustfmt as possible instead of "good enough". 
+
+Prettier-Please is designed for use in LSPs to make use of DSLs in Rust easier. It is used in Dioxus autoformatting logic to support nested calls.
 
 <br>
 
