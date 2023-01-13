@@ -364,7 +364,7 @@ impl Printer {
         self.expr(&expr.expr);
     }
 
-    fn expr_if(&mut self, expr: &ExprIf) {
+    pub fn expr_if(&mut self, expr: &ExprIf) {
         self.outer_attrs(&expr.attrs);
         self.cbox(INDENT);
         self.word("if ");
