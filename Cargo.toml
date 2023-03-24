@@ -1,7 +1,7 @@
 [package]
-name = "prettyplease"
-version = "0.1.15"
-authors = ["David Tolnay <dtolnay@gmail.com>"]
+name = "prettier-please"
+version = "0.1.16"
+authors = ["David Tolnay <dtolnay@gmail.com>", "Jon Kelley"]
 edition = "2021"
 rust-version = "1.56"
 license = "MIT OR Apache-2.0"
