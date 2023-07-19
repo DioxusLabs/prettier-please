@@ -1,11 +1,12 @@
 use crate::algorithm::Printer;
 use crate::iter::IterDelimited;
+use crate::path::PathKind;
 use crate::INDENT;
 use proc_macro2::TokenStream;
 use syn::{
-    Abi, BareFnArg, ReturnType, Type, TypeArray, TypeBareFn, TypeGroup, TypeImplTrait, TypeInfer,
-    TypeMacro, TypeNever, TypeParen, TypePath, TypePtr, TypeReference, TypeSlice, TypeTraitObject,
-    TypeTuple, Variadic,
+    Abi, BareFnArg, BareVariadic, ReturnType, Type, TypeArray, TypeBareFn, TypeGroup,
+    TypeImplTrait, TypeInfer, TypeMacro, TypeNever, TypeParen, TypePath, TypePtr, TypeReference,
+    TypeSlice, TypeTraitObject, TypeTuple,
 };
 
 impl Printer {
@@ -57,7 +58,7 @@ impl Printer {
             self.trailing_comma(bare_fn_arg.is_last && ty.variadic.is_none());
         }
         if let Some(variadic) = &ty.variadic {
-            self.variadic(variadic);
+            self.bare_variadic(variadic);
             self.zerobreak();
         }
         self.offset(-INDENT);
@@ -86,7 +87,8 @@ impl Printer {
     }
 
     fn type_macro(&mut self, ty: &TypeMacro) {
-        self.mac(&ty.mac, None);
+        let semicolon = false;
+        self.mac(&ty.mac, None, semicolon);
     }
 
     fn type_never(&mut self, ty: &TypeNever) {
@@ -101,7 +103,7 @@ impl Printer {
     }
 
     fn type_path(&mut self, ty: &TypePath) {
-        self.qpath(&ty.qself, &ty.path);
+        self.qpath(&ty.qself, &ty.path, PathKind::Type);
     }
 
     fn type_ptr(&mut self, ty: &TypePtr) {
@@ -162,30 +164,60 @@ impl Printer {
 
     #[cfg(not(feature = "verbatim"))]
     fn type_verbatim(&mut self, ty: &TokenStream) {
-        if ty.to_string() == "..." {
-            self.word("...");
-        } else {
-            unimplemented!("Type::Verbatim `{}`", ty);
-        }
+        unimplemented!("Type::Verbatim `{}`", ty);
     }
 
     #[cfg(feature = "verbatim")]
     fn type_verbatim(&mut self, tokens: &TokenStream) {
         use syn::parse::{Parse, ParseStream, Result};
-        use syn::{token, ExprBlock, Lit};
+        use syn::punctuated::Punctuated;
+        use syn::{Token, TypeParamBound};
 
         enum TypeVerbatim {
-            Lit(Lit),
-            Block(ExprBlock),
+            Ellipsis,
+            DynStar(DynStar),
+            MutSelf(MutSelf),
+            NotType(NotType),
+        }
+
+        struct DynStar {
+            bounds: Punctuated<TypeParamBound, Token![+]>,
+        }
+
+        struct MutSelf {
+            ty: Option<Type>,
+        }
+
+        struct NotType {
+            inner: Type,
         }
 
         impl Parse for TypeVerbatim {
             fn parse(input: ParseStream) -> Result<Self> {
                 let lookahead = input.lookahead1();
-                if lookahead.peek(Lit) {
-                    input.parse().map(TypeVerbatim::Lit)
-                } else if lookahead.peek(token::Brace) {
-                    input.parse().map(TypeVerbatim::Block)
+                if lookahead.peek(Token![dyn]) {
+                    input.parse::<Token![dyn]>()?;
+                    input.parse::<Token![*]>()?;
+                    let bounds = input.parse_terminated(TypeParamBound::parse, Token![+])?;
+                    Ok(TypeVerbatim::DynStar(DynStar { bounds }))
+                } else if lookahead.peek(Token![mut]) {
+                    input.parse::<Token![mut]>()?;
+                    input.parse::<Token![self]>()?;
+                    let ty = if input.is_empty() {
+                        None
+                    } else {
+                        input.parse::<Token![:]>()?;
+                        let ty: Type = input.parse()?;
+                        Some(ty)
+                    };
+                    Ok(TypeVerbatim::MutSelf(MutSelf { ty }))
+                } else if lookahead.peek(Token![!]) {
+                    input.parse::<Token![!]>()?;
+                    let inner: Type = input.parse()?;
+                    Ok(TypeVerbatim::NotType(NotType { inner }))
+                } else if lookahead.peek(Token![...]) {
+                    input.parse::<Token![...]>()?;
+                    Ok(TypeVerbatim::Ellipsis)
                 } else {
                     Err(lookahead.error())
                 }
@@ -198,11 +230,28 @@ impl Printer {
         };
 
         match ty {
-            TypeVerbatim::Lit(lit) => {
-                self.lit(&lit);
+            TypeVerbatim::Ellipsis => {
+                self.word("...");
             }
-            TypeVerbatim::Block(block) => {
-                self.expr_block(&block);
+            TypeVerbatim::DynStar(ty) => {
+                self.word("dyn* ");
+                for type_param_bound in ty.bounds.iter().delimited() {
+                    if !type_param_bound.is_first {
+                        self.word(" + ");
+                    }
+                    self.type_param_bound(&type_param_bound);
+                }
+            }
+            TypeVerbatim::MutSelf(bare_fn_arg) => {
+                self.word("mut self");
+                if let Some(ty) = &bare_fn_arg.ty {
+                    self.word(": ");
+                    self.ty(ty);
+                }
+            }
+            TypeVerbatim::NotType(ty) => {
+                self.word("!");
+                self.ty(&ty.inner);
             }
         }
     }
@@ -226,8 +275,12 @@ impl Printer {
         self.ty(&bare_fn_arg.ty);
     }
 
-    fn variadic(&mut self, variadic: &Variadic) {
+    fn bare_variadic(&mut self, variadic: &BareVariadic) {
         self.outer_attrs(&variadic.attrs);
+        if let Some((name, _colon)) = &variadic.name {
+            self.ident(name);
+            self.word(": ");
+        }
         self.word("...");
     }
 

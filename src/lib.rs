@@ -49,16 +49,16 @@
 //! more detail comparing the output of each of these libraries.
 //!
 //! | | prettyplease | rustc | rustfmt |
-//! | --- | --- | --- | --- |
-//! | non-pathological behavior on big or generated code | ✅ | ❌ | ❌ |
-//! | idiomatic modern formatting ("locally indistinguishable from rustfmt") | ✅ | ❌ | ✅ |
+//! |:---|:---:|:---:|:---:|
+//! | non-pathological behavior on big or generated code | 💚 | ❌ | ❌ |
+//! | idiomatic modern formatting ("locally indistinguishable from rustfmt") | 💚 | ❌ | 💚 |
 //! | throughput | 60 MB/s | 39 MB/s | 2.8 MB/s |
 //! | number of dependencies | 3 | 72 | 66 |
 //! | compile time including dependencies | 2.4 sec | 23.1 sec | 29.8 sec |
-//! | buildable using a stable Rust compiler | ✅ | ❌ | ❌ |
-//! | published to crates.io | ✅ | ❌ | ❌ |
-//! | extensively configurable output | ❌ | ❌ | ✅ |
-//! | intended to accommodate hand-maintained source code | ❌ | ❌ | ✅ |
+//! | buildable using a stable Rust compiler | 💚 | ❌ | ❌ |
+//! | published to crates.io | 💚 | ❌ | ❌ |
+//! | extensively configurable output | ❌ | ❌ | 💚 |
+//! | intended to accommodate hand-maintained source code | ❌ | ❌ | 💚 |
 //!
 //! <br>
 //!
@@ -179,8 +179,8 @@
 //!
 //! ```
 //! // [dependencies]
-//! // prettyplease = "0.1"
-//! // syn = { version = "1", default-features = false, features = ["full", "parsing"] }
+//! // prettyplease = "0.2"
+//! // syn = { version = "2", default-features = false, features = ["full", "parsing"] }
 //!
 //! const INPUT: &str = stringify! {
 //!     use crate::{
@@ -320,6 +320,7 @@
 //! these situations with conditional punctuation tokens whose selection can be
 //! deferred and populated after it's known that the group is or is not broken.
 
+#![doc(html_root_url = "https://docs.rs/prettyplease/0.2.10")]
 #![allow(
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss,
@@ -327,6 +328,7 @@
     clippy::doc_markdown,
     clippy::enum_glob_use,
     clippy::items_after_statements,
+    clippy::let_underscore_untyped,
     clippy::match_like_matches_macro,
     clippy::match_same_arms,
     clippy::module_name_repetitions,
@@ -359,7 +361,7 @@ mod token;
 mod ty;
 
 use crate::algorithm::Printer;
-use syn::{Expr, ExprIf, File};
+use syn::File;
 
 // Target line width.
 const MARGIN: isize = 89;
@@ -373,17 +375,5 @@ const MIN_SPACE: isize = 60;
 pub fn unparse(file: &File) -> String {
     let mut p = Printer::new();
     p.file(file);
-    p.eof()
-}
-
-pub fn unparse_expr(file: &Expr) -> String {
-    let mut p = Printer::new();
-    p.expr(file);
-    p.eof()
-}
-
-pub fn unparse_expr_if(file: &ExprIf) -> String {
-    let mut p = Printer::new();
-    p.expr_if(file);
     p.eof()
 }
