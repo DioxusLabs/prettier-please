@@ -378,12 +378,6 @@ pub fn unparse(file: &File) -> String {
     p.eof()
 }
 
-pub fn unparse(file: &File) -> String {
-    let mut p = Printer::new();
-    p.file(file);
-    p.eof()
-}
-
 pub fn unparse_expr(expr: &Expr) -> String {
     let mut p = Printer::new();
     p.expr(expr);
