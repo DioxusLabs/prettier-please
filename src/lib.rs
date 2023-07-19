@@ -390,7 +390,7 @@ pub fn unparse_expr(expr: &Expr) -> String {
     p.eof()
 }
 
-pub fn unparse_exprif(expr_if: &ExprIf) -> String {
+pub fn unparse_expr_if(expr_if: &ExprIf) -> String {
     let mut p = Printer::new();
     p.expr_if(expr_if);
     p.eof()
