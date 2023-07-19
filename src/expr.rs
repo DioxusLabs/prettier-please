@@ -1,18 +1,19 @@
 use crate::algorithm::{BreakToken, Printer};
 use crate::attr;
 use crate::iter::IterDelimited;
+use crate::path::PathKind;
 use crate::stmt;
 use crate::INDENT;
 use proc_macro2::TokenStream;
 use syn::punctuated::Punctuated;
 use syn::{
-    token, Arm, Attribute, BinOp, Block, Expr, ExprArray, ExprAssign, ExprAssignOp, ExprAsync,
-    ExprAwait, ExprBinary, ExprBlock, ExprBox, ExprBreak, ExprCall, ExprCast, ExprClosure,
-    ExprContinue, ExprField, ExprForLoop, ExprGroup, ExprIf, ExprIndex, ExprLet, ExprLit, ExprLoop,
+    token, Arm, Attribute, BinOp, Block, Expr, ExprArray, ExprAssign, ExprAsync, ExprAwait,
+    ExprBinary, ExprBlock, ExprBreak, ExprCall, ExprCast, ExprClosure, ExprConst, ExprContinue,
+    ExprField, ExprForLoop, ExprGroup, ExprIf, ExprIndex, ExprInfer, ExprLet, ExprLit, ExprLoop,
     ExprMacro, ExprMatch, ExprMethodCall, ExprParen, ExprPath, ExprRange, ExprReference,
-    ExprRepeat, ExprReturn, ExprStruct, ExprTry, ExprTryBlock, ExprTuple, ExprType, ExprUnary,
-    ExprUnsafe, ExprWhile, ExprYield, FieldValue, GenericMethodArgument, Index, Label, Member,
-    MethodTurbofish, PathArguments, QSelf, RangeLimits, ReturnType, Stmt, Token, UnOp,
+    ExprRepeat, ExprReturn, ExprStruct, ExprTry, ExprTryBlock, ExprTuple, ExprUnary, ExprUnsafe,
+    ExprWhile, ExprYield, FieldValue, Index, Label, Member, RangeLimits, ReturnType, Stmt, Token,
+    UnOp,
 };
 
 impl Printer {
@@ -20,22 +21,22 @@ impl Printer {
         match expr {
             Expr::Array(expr) => self.expr_array(expr),
             Expr::Assign(expr) => self.expr_assign(expr),
-            Expr::AssignOp(expr) => self.expr_assign_op(expr),
             Expr::Async(expr) => self.expr_async(expr),
             Expr::Await(expr) => self.expr_await(expr, false),
             Expr::Binary(expr) => self.expr_binary(expr),
             Expr::Block(expr) => self.expr_block(expr),
-            Expr::Box(expr) => self.expr_box(expr),
             Expr::Break(expr) => self.expr_break(expr),
             Expr::Call(expr) => self.expr_call(expr, false),
             Expr::Cast(expr) => self.expr_cast(expr),
             Expr::Closure(expr) => self.expr_closure(expr),
+            Expr::Const(expr) => self.expr_const(expr),
             Expr::Continue(expr) => self.expr_continue(expr),
             Expr::Field(expr) => self.expr_field(expr, false),
             Expr::ForLoop(expr) => self.expr_for_loop(expr),
             Expr::Group(expr) => self.expr_group(expr),
             Expr::If(expr) => self.expr_if(expr),
             Expr::Index(expr) => self.expr_index(expr, false),
+            Expr::Infer(expr) => self.expr_infer(expr),
             Expr::Let(expr) => self.expr_let(expr),
             Expr::Lit(expr) => self.expr_lit(expr),
             Expr::Loop(expr) => self.expr_loop(expr),
@@ -52,7 +53,6 @@ impl Printer {
             Expr::Try(expr) => self.expr_try(expr, false),
             Expr::TryBlock(expr) => self.expr_try_block(expr),
             Expr::Tuple(expr) => self.expr_tuple(expr),
-            Expr::Type(expr) => self.expr_type(expr),
             Expr::Unary(expr) => self.expr_unary(expr),
             Expr::Unsafe(expr) => self.expr_unsafe(expr),
             Expr::Verbatim(expr) => self.expr_verbatim(expr),
@@ -90,8 +90,6 @@ impl Printer {
         }
     }
 
-    // If the given expression is a bare `ExprStruct`, wraps it in parenthesis
-    // before appending it to `TokenStream`.
     fn wrap_exterior_struct(&mut self, expr: &Expr) {
         let needs_paren = contains_exterior_struct_lit(expr);
         if needs_paren {
@@ -129,19 +127,6 @@ impl Printer {
         self.ibox(0);
         self.expr(&expr.left);
         self.word(" = ");
-        self.expr(&expr.right);
-        self.end();
-    }
-
-    fn expr_assign_op(&mut self, expr: &ExprAssignOp) {
-        self.outer_attrs(&expr.attrs);
-        self.ibox(INDENT);
-        self.ibox(-INDENT);
-        self.expr(&expr.left);
-        self.end();
-        self.space();
-        self.binary_operator(&expr.op);
-        self.nbsp();
         self.expr(&expr.right);
         self.end();
     }
@@ -193,12 +178,6 @@ impl Printer {
         self.end();
     }
 
-    fn expr_box(&mut self, expr: &ExprBox) {
-        self.outer_attrs(&expr.attrs);
-        self.word("box ");
-        self.expr(&expr.expr);
-    }
-
     fn expr_break(&mut self, expr: &ExprBreak) {
         self.outer_attrs(&expr.attrs);
         self.word("break");
@@ -242,11 +221,17 @@ impl Printer {
     fn expr_closure(&mut self, expr: &ExprClosure) {
         self.outer_attrs(&expr.attrs);
         self.ibox(0);
-        if expr.asyncness.is_some() {
-            self.word("async ");
+        if let Some(bound_lifetimes) = &expr.lifetimes {
+            self.bound_lifetimes(bound_lifetimes);
+        }
+        if expr.constness.is_some() {
+            self.word("const ");
         }
         if expr.movability.is_some() {
             self.word("static ");
+        }
+        if expr.asyncness.is_some() {
+            self.word("async ");
         }
         if expr.capture.is_some() {
             self.word("move ");
@@ -278,15 +263,16 @@ impl Printer {
                 };
                 if wrap_in_brace {
                     self.cbox(INDENT);
+                    let okay_to_brace = parseable_as_stmt(&expr.body);
                     self.scan_break(BreakToken {
-                        pre_break: Some('{'),
+                        pre_break: Some(if okay_to_brace { '{' } else { '(' }),
                         ..BreakToken::default()
                     });
                     self.expr(&expr.body);
                     self.scan_break(BreakToken {
                         offset: -INDENT,
-                        pre_break: stmt::add_semi(&expr.body).then(|| ';'),
-                        post_break: Some('}'),
+                        pre_break: (okay_to_brace && stmt::add_semi(&expr.body)).then(|| ';'),
+                        post_break: Some(if okay_to_brace { '}' } else { ')' }),
                         ..BreakToken::default()
                     });
                     self.end();
@@ -308,6 +294,14 @@ impl Printer {
                 self.expr(&expr.body);
             }
         }
+        self.end();
+    }
+
+    pub fn expr_const(&mut self, expr: &ExprConst) {
+        self.outer_attrs(&expr.attrs);
+        self.word("const ");
+        self.cbox(INDENT);
+        self.small_block(&expr.block, &expr.attrs);
         self.end();
     }
 
@@ -364,7 +358,7 @@ impl Printer {
         self.expr(&expr.expr);
     }
 
-    pub fn expr_if(&mut self, expr: &ExprIf) {
+    pub(crate) fn expr_if(&mut self, expr: &ExprIf) {
         self.outer_attrs(&expr.attrs);
         self.cbox(INDENT);
         self.word("if ");
@@ -379,7 +373,9 @@ impl Printer {
                 match else_branch {
                     Expr::If(expr) => {
                         self.word("if ");
+                        self.cbox(-INDENT);
                         self.wrap_exterior_struct(&expr.cond);
+                        self.end();
                         self.small_block(&expr.then_branch, &[]);
                         if let Some((_else_token, next)) = &expr.else_branch {
                             else_branch = next;
@@ -433,6 +429,11 @@ impl Printer {
         self.word("]");
     }
 
+    fn expr_infer(&mut self, expr: &ExprInfer) {
+        self.outer_attrs(&expr.attrs);
+        self.word("_");
+    }
+
     fn expr_let(&mut self, expr: &ExprLet) {
         self.outer_attrs(&expr.attrs);
         self.ibox(INDENT);
@@ -475,9 +476,10 @@ impl Printer {
         self.word("}");
     }
 
-    fn expr_macro(&mut self, expr: &ExprMacro) {
+    pub fn expr_macro(&mut self, expr: &ExprMacro) {
         self.outer_attrs(&expr.attrs);
-        self.mac(&expr.mac, None);
+        let semicolon = false;
+        self.mac(&expr.mac, None, semicolon);
     }
 
     fn expr_match(&mut self, expr: &ExprMatch) {
@@ -519,7 +521,7 @@ impl Printer {
         self.word(".");
         self.ident(&expr.method);
         if let Some(turbofish) = &expr.turbofish {
-            self.method_turbofish(turbofish);
+            self.angle_bracketed_generic_arguments(turbofish, PathKind::Expr);
         }
         self.cbox(if unindent_call_args { -INDENT } else { 0 });
         self.word("(");
@@ -535,22 +537,22 @@ impl Printer {
         self.word(")");
     }
 
-    fn expr_path(&mut self, expr: &ExprPath) {
+    pub fn expr_path(&mut self, expr: &ExprPath) {
         self.outer_attrs(&expr.attrs);
-        self.qpath(&expr.qself, &expr.path);
+        self.qpath(&expr.qself, &expr.path, PathKind::Expr);
     }
 
-    fn expr_range(&mut self, expr: &ExprRange) {
+    pub fn expr_range(&mut self, expr: &ExprRange) {
         self.outer_attrs(&expr.attrs);
-        if let Some(from) = &expr.from {
-            self.expr(from);
+        if let Some(start) = &expr.start {
+            self.expr(start);
         }
         self.word(match expr.limits {
             RangeLimits::HalfOpen(_) => "..",
             RangeLimits::Closed(_) => "..=",
         });
-        if let Some(to) = &expr.to {
-            self.expr(to);
+        if let Some(end) = &expr.end {
+            self.expr(end);
         }
     }
 
@@ -582,14 +584,10 @@ impl Printer {
     }
 
     fn expr_struct(&mut self, expr: &ExprStruct) {
-        self.expr_qualified_struct(&None, expr);
-    }
-
-    fn expr_qualified_struct(&mut self, qself: &Option<QSelf>, expr: &ExprStruct) {
         self.outer_attrs(&expr.attrs);
         self.cbox(INDENT);
         self.ibox(-INDENT);
-        self.qpath(qself, &expr.path);
+        self.qpath(&expr.qself, &expr.path, PathKind::Expr);
         self.end();
         self.word(" {");
         self.space_if_nonempty();
@@ -645,18 +643,6 @@ impl Printer {
         self.word(")");
     }
 
-    fn expr_type(&mut self, expr: &ExprType) {
-        self.outer_attrs(&expr.attrs);
-        self.ibox(INDENT);
-        self.ibox(-INDENT);
-        self.expr(&expr.expr);
-        self.end();
-        self.space();
-        self.word(": ");
-        self.ty(&expr.ty);
-        self.end();
-    }
-
     fn expr_unary(&mut self, expr: &ExprUnary) {
         self.outer_attrs(&expr.attrs);
         self.unary_operator(&expr.op);
@@ -665,23 +651,10 @@ impl Printer {
 
     fn expr_unsafe(&mut self, expr: &ExprUnsafe) {
         self.outer_attrs(&expr.attrs);
-        self.word("unsafe {");
+        self.word("unsafe ");
         self.cbox(INDENT);
-        self.space_if_nonempty();
-        self.inner_attrs(&expr.attrs);
-        for stmt in expr.block.stmts.iter().delimited() {
-            if stmt.is_first && stmt.is_last {
-                if let Stmt::Expr(expr) = &*stmt {
-                    self.expr(expr);
-                    self.space();
-                    continue;
-                }
-            }
-            self.stmt(&stmt);
-        }
-        self.offset(-INDENT);
+        self.small_block(&expr.block, &expr.attrs);
         self.end();
-        self.word("}");
     }
 
     #[cfg(not(feature = "verbatim"))]
@@ -693,51 +666,52 @@ impl Printer {
 
     #[cfg(feature = "verbatim")]
     fn expr_verbatim(&mut self, tokens: &TokenStream) {
+        use syn::parse::discouraged::Speculative;
         use syn::parse::{Parse, ParseStream, Result};
-        use syn::{braced, BoundLifetimes};
+        use syn::{parenthesized, Ident};
 
         enum ExprVerbatim {
             Empty,
-            Infer,
+            Ellipsis,
+            Builtin(Builtin),
             RawReference(RawReference),
-            ConstBlock(ConstBlock),
-            ClosureWithLifetimes(ClosureWithLifetimes),
-            QualifiedStruct(QualifiedStruct),
+        }
+
+        struct Builtin {
+            attrs: Vec<Attribute>,
+            name: Ident,
+            args: TokenStream,
         }
 
         struct RawReference {
+            attrs: Vec<Attribute>,
             mutable: bool,
             expr: Expr,
         }
 
-        struct ConstBlock {
-            attrs: Vec<Attribute>,
-            block: Block,
-        }
-
-        struct ClosureWithLifetimes {
-            lifetimes: BoundLifetimes,
-            closure: ExprClosure,
-        }
-
-        struct QualifiedStruct {
-            qself: QSelf,
-            strct: ExprStruct,
-        }
-
         mod kw {
+            syn::custom_keyword!(builtin);
             syn::custom_keyword!(raw);
         }
 
         impl Parse for ExprVerbatim {
             fn parse(input: ParseStream) -> Result<Self> {
-                let lookahead = input.lookahead1();
+                let ahead = input.fork();
+                let attrs = ahead.call(Attribute::parse_outer)?;
+                let lookahead = ahead.lookahead1();
                 if input.is_empty() {
                     Ok(ExprVerbatim::Empty)
-                } else if lookahead.peek(Token![_]) {
-                    input.parse::<Token![_]>()?;
-                    Ok(ExprVerbatim::Infer)
+                } else if lookahead.peek(kw::builtin) {
+                    input.advance_to(&ahead);
+                    input.parse::<kw::builtin>()?;
+                    input.parse::<Token![#]>()?;
+                    let name: Ident = input.parse()?;
+                    let args;
+                    parenthesized!(args in input);
+                    let args: TokenStream = args.parse()?;
+                    Ok(ExprVerbatim::Builtin(Builtin { attrs, name, args }))
                 } else if lookahead.peek(Token![&]) {
+                    input.advance_to(&ahead);
                     input.parse::<Token![&]>()?;
                     input.parse::<kw::raw>()?;
                     let mutable = input.parse::<Option<Token![mut]>>()?.is_some();
@@ -745,54 +719,14 @@ impl Printer {
                         input.parse::<Token![const]>()?;
                     }
                     let expr: Expr = input.parse()?;
-                    Ok(ExprVerbatim::RawReference(RawReference { mutable, expr }))
-                } else if lookahead.peek(Token![const]) {
-                    input.parse::<Token![const]>()?;
-                    let content;
-                    let brace_token = braced!(content in input);
-                    let attrs = content.call(Attribute::parse_inner)?;
-                    let stmts = content.call(Block::parse_within)?;
-                    Ok(ExprVerbatim::ConstBlock(ConstBlock {
+                    Ok(ExprVerbatim::RawReference(RawReference {
                         attrs,
-                        block: Block { brace_token, stmts },
+                        mutable,
+                        expr,
                     }))
-                } else if lookahead.peek(Token![for]) {
-                    let lifetimes = input.parse()?;
-                    let closure = input.parse()?;
-                    Ok(ExprVerbatim::ClosureWithLifetimes(ClosureWithLifetimes {
-                        lifetimes,
-                        closure,
-                    }))
-                } else if lookahead.peek(Token![<]) {
-                    let path: ExprPath = input.parse()?;
-                    let content;
-                    let mut expr = QualifiedStruct {
-                        qself: path.qself.unwrap(),
-                        strct: ExprStruct {
-                            attrs: Vec::new(),
-                            brace_token: braced!(content in input),
-                            path: path.path,
-                            fields: Punctuated::new(),
-                            dot2_token: None,
-                            rest: None,
-                        },
-                    };
-                    while !content.is_empty() {
-                        if content.peek(Token![..]) {
-                            expr.strct.dot2_token = Some(content.parse()?);
-                            if !content.is_empty() {
-                                expr.strct.rest = Some(Box::new(content.parse()?));
-                            }
-                            break;
-                        }
-                        expr.strct.fields.push(content.parse()?);
-                        if content.is_empty() {
-                            break;
-                        }
-                        let punct: Token![,] = content.parse()?;
-                        expr.strct.fields.push_punct(punct);
-                    }
-                    Ok(ExprVerbatim::QualifiedStruct(expr))
+                } else if lookahead.peek(Token![...]) {
+                    input.parse::<Token![...]>()?;
+                    Ok(ExprVerbatim::Ellipsis)
                 } else {
                     Err(lookahead.error())
                 }
@@ -806,27 +740,31 @@ impl Printer {
 
         match expr {
             ExprVerbatim::Empty => {}
-            ExprVerbatim::Infer => {
-                self.word("_");
+            ExprVerbatim::Ellipsis => {
+                self.word("...");
+            }
+            ExprVerbatim::Builtin(expr) => {
+                self.outer_attrs(&expr.attrs);
+                self.word("builtin # ");
+                self.ident(&expr.name);
+                self.word("(");
+                if !expr.args.is_empty() {
+                    self.cbox(INDENT);
+                    self.zerobreak();
+                    self.ibox(0);
+                    self.macro_rules_tokens(expr.args, false);
+                    self.end();
+                    self.zerobreak();
+                    self.offset(-INDENT);
+                    self.end();
+                }
+                self.word(")");
             }
             ExprVerbatim::RawReference(expr) => {
+                self.outer_attrs(&expr.attrs);
                 self.word("&raw ");
                 self.word(if expr.mutable { "mut " } else { "const " });
                 self.expr(&expr.expr);
-            }
-            ExprVerbatim::ConstBlock(expr) => {
-                self.outer_attrs(&expr.attrs);
-                self.cbox(INDENT);
-                self.word("const ");
-                self.small_block(&expr.block, &expr.attrs);
-                self.end();
-            }
-            ExprVerbatim::ClosureWithLifetimes(expr) => {
-                self.bound_lifetimes(&expr.lifetimes);
-                self.expr_closure(&expr.closure);
-            }
-            ExprVerbatim::QualifiedStruct(expr) => {
-                self.expr_qualified_struct(&Some(expr.qself), &expr.strct);
             }
         }
     }
@@ -890,7 +828,7 @@ impl Printer {
         while let Expr::Block(expr) = body {
             if expr.attrs.is_empty() && expr.label.is_none() {
                 let mut stmts = expr.block.stmts.iter();
-                if let (Some(Stmt::Expr(inner)), None) = (stmts.next(), stmts.next()) {
+                if let (Some(Stmt::Expr(inner, None)), None) = (stmts.next(), stmts.next()) {
                     body = inner;
                     continue;
                 }
@@ -935,7 +873,7 @@ impl Printer {
                 pre_break: Some('{'),
                 ..BreakToken::default()
             });
-            self.expr(body);
+            self.expr_beginning_of_line(body, true);
             self.scan_break(BreakToken {
                 offset: -INDENT,
                 pre_break: stmt::add_semi(body).then(|| ';'),
@@ -945,26 +883,6 @@ impl Printer {
             });
             self.end();
             self.end();
-        }
-    }
-
-    fn method_turbofish(&mut self, turbofish: &MethodTurbofish) {
-        self.word("::<");
-        self.cbox(INDENT);
-        self.zerobreak();
-        for arg in turbofish.args.iter().delimited() {
-            self.generic_method_argument(&arg);
-            self.trailing_comma(arg.is_last);
-        }
-        self.offset(-INDENT);
-        self.end();
-        self.word(">");
-    }
-
-    fn generic_method_argument(&mut self, generic: &GenericMethodArgument) {
-        match generic {
-            GenericMethodArgument::Type(arg) => self.ty(arg),
-            GenericMethodArgument::Const(arg) => self.expr(arg),
         }
     }
 
@@ -987,13 +905,13 @@ impl Printer {
         }
     }
 
-    fn small_block(&mut self, block: &Block, attrs: &[Attribute]) {
+    pub fn small_block(&mut self, block: &Block, attrs: &[Attribute]) {
         self.word("{");
         if attr::has_inner(attrs) || !block.stmts.is_empty() {
             self.space();
             self.inner_attrs(attrs);
             match (block.stmts.get(0), block.stmts.get(1)) {
-                (Some(Stmt::Expr(expr)), None) if stmt::break_after(expr) => {
+                (Some(Stmt::Expr(expr, None)), None) if stmt::break_after(expr) => {
                     self.ibox(0);
                     self.expr_beginning_of_line(expr, true);
                     self.end();
@@ -1041,16 +959,18 @@ impl Printer {
             BinOp::Ne(_) => "!=",
             BinOp::Ge(_) => ">=",
             BinOp::Gt(_) => ">",
-            BinOp::AddEq(_) => "+=",
-            BinOp::SubEq(_) => "-=",
-            BinOp::MulEq(_) => "*=",
-            BinOp::DivEq(_) => "/=",
-            BinOp::RemEq(_) => "%=",
-            BinOp::BitXorEq(_) => "^=",
-            BinOp::BitAndEq(_) => "&=",
-            BinOp::BitOrEq(_) => "|=",
-            BinOp::ShlEq(_) => "<<=",
-            BinOp::ShrEq(_) => ">>=",
+            BinOp::AddAssign(_) => "+=",
+            BinOp::SubAssign(_) => "-=",
+            BinOp::MulAssign(_) => "*=",
+            BinOp::DivAssign(_) => "/=",
+            BinOp::RemAssign(_) => "%=",
+            BinOp::BitXorAssign(_) => "^=",
+            BinOp::BitAndAssign(_) => "&=",
+            BinOp::BitOrAssign(_) => "|=",
+            BinOp::ShlAssign(_) => "<<=",
+            BinOp::ShrAssign(_) => ">>=",
+            #[cfg_attr(all(test, exhaustive), deny(non_exhaustive_omitted_patterns))]
+            _ => unimplemented!("unknown BinOp"),
         });
     }
 
@@ -1059,6 +979,8 @@ impl Printer {
             UnOp::Deref(_) => "*",
             UnOp::Not(_) => "!",
             UnOp::Neg(_) => "-",
+            #[cfg_attr(all(test, exhaustive), deny(non_exhaustive_omitted_patterns))]
+            _ => unimplemented!("unknown UnOp"),
         });
     }
 
@@ -1070,18 +992,50 @@ impl Printer {
     }
 }
 
-pub fn requires_terminator(expr: &Expr) -> bool {
-    // see https://github.com/rust-lang/rust/blob/2679c38fc/src/librustc_ast/util/classify.rs#L7-L25
+fn requires_terminator(expr: &Expr) -> bool {
+    // see https://github.com/rust-lang/rust/blob/a266f1199/compiler/rustc_ast/src/util/classify.rs#L7-L26
     match expr {
-        Expr::Unsafe(_)
-        | Expr::Block(_)
-        | Expr::If(_)
+        Expr::If(_)
         | Expr::Match(_)
+        | Expr::Block(_) | Expr::Unsafe(_) // both under ExprKind::Block in rustc
         | Expr::While(_)
         | Expr::Loop(_)
         | Expr::ForLoop(_)
+        | Expr::TryBlock(_)
+        | Expr::Const(_) => false,
+
+        Expr::Array(_)
+        | Expr::Assign(_)
         | Expr::Async(_)
-        | Expr::TryBlock(_) => false,
+        | Expr::Await(_)
+        | Expr::Binary(_)
+        | Expr::Break(_)
+        | Expr::Call(_)
+        | Expr::Cast(_)
+        | Expr::Closure(_)
+        | Expr::Continue(_)
+        | Expr::Field(_)
+        | Expr::Group(_)
+        | Expr::Index(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Macro(_)
+        | Expr::MethodCall(_)
+        | Expr::Paren(_)
+        | Expr::Path(_)
+        | Expr::Range(_)
+        | Expr::Reference(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::Try(_)
+        | Expr::Tuple(_)
+        | Expr::Unary(_)
+        | Expr::Verbatim(_)
+        | Expr::Yield(_) => true,
+
+        #[cfg_attr(all(test, exhaustive), deny(non_exhaustive_omitted_patterns))]
         _ => true,
     }
 }
@@ -1095,25 +1049,53 @@ fn contains_exterior_struct_lit(expr: &Expr) -> bool {
         Expr::Struct(_) => true,
 
         Expr::Assign(ExprAssign { left, right, .. })
-        | Expr::AssignOp(ExprAssignOp { left, right, .. })
         | Expr::Binary(ExprBinary { left, right, .. }) => {
             // X { y: 1 } + X { y: 2 }
             contains_exterior_struct_lit(left) || contains_exterior_struct_lit(right)
         }
 
         Expr::Await(ExprAwait { base: e, .. })
-        | Expr::Box(ExprBox { expr: e, .. })
         | Expr::Cast(ExprCast { expr: e, .. })
         | Expr::Field(ExprField { base: e, .. })
         | Expr::Index(ExprIndex { expr: e, .. })
         | Expr::MethodCall(ExprMethodCall { receiver: e, .. })
         | Expr::Reference(ExprReference { expr: e, .. })
-        | Expr::Type(ExprType { expr: e, .. })
         | Expr::Unary(ExprUnary { expr: e, .. }) => {
             // &X { y: 1 }, X { y: 1 }.y
             contains_exterior_struct_lit(e)
         }
 
+        Expr::Array(_)
+        | Expr::Async(_)
+        | Expr::Block(_)
+        | Expr::Break(_)
+        | Expr::Call(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::ForLoop(_)
+        | Expr::Group(_)
+        | Expr::If(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::Paren(_)
+        | Expr::Path(_)
+        | Expr::Range(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Try(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Unsafe(_)
+        | Expr::Verbatim(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => false,
+
+        #[cfg_attr(all(test, exhaustive), deny(non_exhaustive_omitted_patterns))]
         _ => false,
     }
 }
@@ -1125,15 +1107,17 @@ fn needs_newline_if_wrap(expr: &Expr) -> bool {
         | Expr::Block(_)
         | Expr::Break(ExprBreak { expr: None, .. })
         | Expr::Closure(_)
+        | Expr::Const(_)
         | Expr::Continue(_)
         | Expr::ForLoop(_)
         | Expr::If(_)
+        | Expr::Infer(_)
         | Expr::Lit(_)
         | Expr::Loop(_)
         | Expr::Macro(_)
         | Expr::Match(_)
         | Expr::Path(_)
-        | Expr::Range(ExprRange { to: None, .. })
+        | Expr::Range(ExprRange { end: None, .. })
         | Expr::Repeat(_)
         | Expr::Return(ExprReturn { expr: None, .. })
         | Expr::Struct(_)
@@ -1145,22 +1129,19 @@ fn needs_newline_if_wrap(expr: &Expr) -> bool {
         | Expr::Yield(ExprYield { expr: None, .. }) => false,
 
         Expr::Assign(_)
-        | Expr::AssignOp(_)
         | Expr::Await(_)
         | Expr::Binary(_)
         | Expr::Cast(_)
         | Expr::Field(_)
         | Expr::Index(_)
-        | Expr::MethodCall(_)
-        | Expr::Type(_) => true,
+        | Expr::MethodCall(_) => true,
 
-        Expr::Box(ExprBox { expr: e, .. })
-        | Expr::Break(ExprBreak { expr: Some(e), .. })
+        Expr::Break(ExprBreak { expr: Some(e), .. })
         | Expr::Call(ExprCall { func: e, .. })
         | Expr::Group(ExprGroup { expr: e, .. })
         | Expr::Let(ExprLet { expr: e, .. })
         | Expr::Paren(ExprParen { expr: e, .. })
-        | Expr::Range(ExprRange { to: Some(e), .. })
+        | Expr::Range(ExprRange { end: Some(e), .. })
         | Expr::Reference(ExprReference { expr: e, .. })
         | Expr::Return(ExprReturn { expr: Some(e), .. })
         | Expr::Try(ExprTry { expr: e, .. })
@@ -1174,16 +1155,12 @@ fn needs_newline_if_wrap(expr: &Expr) -> bool {
 
 fn is_short_ident(expr: &Expr) -> bool {
     if let Expr::Path(expr) = expr {
-        if expr.attrs.is_empty()
+        return expr.attrs.is_empty()
             && expr.qself.is_none()
-            && expr.path.leading_colon.is_none()
-            && expr.path.segments.len() == 1
-            && expr.path.segments[0].ident.to_string().len() as isize <= INDENT
-        {
-            if let PathArguments::None = expr.path.segments[0].arguments {
-                return true;
-            }
-        }
+            && expr
+                .path
+                .get_ident()
+                .map_or(false, |ident| ident.to_string().len() as isize <= INDENT);
     }
     false
 }
@@ -1194,10 +1171,99 @@ fn is_blocklike(expr: &Expr) -> bool {
         | Expr::Async(ExprAsync { attrs, .. })
         | Expr::Block(ExprBlock { attrs, .. })
         | Expr::Closure(ExprClosure { attrs, .. })
+        | Expr::Const(ExprConst { attrs, .. })
         | Expr::Struct(ExprStruct { attrs, .. })
         | Expr::TryBlock(ExprTryBlock { attrs, .. })
         | Expr::Tuple(ExprTuple { attrs, .. })
         | Expr::Unsafe(ExprUnsafe { attrs, .. }) => !attr::has_outer(attrs),
+
+        Expr::Assign(_)
+        | Expr::Await(_)
+        | Expr::Binary(_)
+        | Expr::Break(_)
+        | Expr::Call(_)
+        | Expr::Cast(_)
+        | Expr::Continue(_)
+        | Expr::Field(_)
+        | Expr::ForLoop(_)
+        | Expr::Group(_)
+        | Expr::If(_)
+        | Expr::Index(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::MethodCall(_)
+        | Expr::Paren(_)
+        | Expr::Path(_)
+        | Expr::Range(_)
+        | Expr::Reference(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Try(_)
+        | Expr::Unary(_)
+        | Expr::Verbatim(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => false,
+
+        #[cfg_attr(all(test, exhaustive), deny(non_exhaustive_omitted_patterns))]
+        _ => false,
+    }
+}
+
+// Expressions for which `$expr` and `{ $expr }` mean the same thing.
+//
+// This is not the case for all expressions. For example `{} | x | x` has some
+// bitwise OR operators while `{ {} |x| x }` has a block followed by a closure.
+fn parseable_as_stmt(expr: &Expr) -> bool {
+    match expr {
+        Expr::Array(_)
+        | Expr::Async(_)
+        | Expr::Block(_)
+        | Expr::Break(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::ForLoop(_)
+        | Expr::If(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::Paren(_)
+        | Expr::Path(_)
+        | Expr::Reference(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Unary(_)
+        | Expr::Unsafe(_)
+        | Expr::Verbatim(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => true,
+
+        Expr::Assign(expr) => parseable_as_stmt(&expr.left),
+        Expr::Await(expr) => parseable_as_stmt(&expr.base),
+        Expr::Binary(expr) => requires_terminator(&expr.left) && parseable_as_stmt(&expr.left),
+        Expr::Call(expr) => requires_terminator(&expr.func) && parseable_as_stmt(&expr.func),
+        Expr::Cast(expr) => requires_terminator(&expr.expr) && parseable_as_stmt(&expr.expr),
+        Expr::Field(expr) => parseable_as_stmt(&expr.base),
+        Expr::Group(expr) => parseable_as_stmt(&expr.expr),
+        Expr::Index(expr) => requires_terminator(&expr.expr) && parseable_as_stmt(&expr.expr),
+        Expr::MethodCall(expr) => parseable_as_stmt(&expr.receiver),
+        Expr::Range(expr) => match &expr.start {
+            None => true,
+            Some(start) => requires_terminator(start) && parseable_as_stmt(start),
+        },
+        Expr::Try(expr) => parseable_as_stmt(&expr.expr),
+
+        #[cfg_attr(all(test, exhaustive), deny(non_exhaustive_omitted_patterns))]
         _ => false,
     }
 }

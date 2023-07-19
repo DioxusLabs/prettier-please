@@ -17,11 +17,17 @@ exclude = ["cargo-expand"]
 verbatim = ["syn/parsing"]
 
 [dependencies]
-proc-macro2 = { version = "1.0", default-features = false }
-syn = { version = "1.0.90", default-features = false, features = ["full"] }
+proc-macro2 = { version = "1.0.63", default-features = false }
+syn = { version = "2.0.23", default-features = false, features = ["full"] }
 
 [dev-dependencies]
-syn = { version = "1.0.90", default-features = false, features = ["parsing"] }
+syn = { version = "2.0.23", default-features = false, features = ["parsing"] }
 
-[workspace]
-members = ["cargo-expand/update", "examples/update"]
+[lib]
+doc-scrape-examples = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[package.metadata.playground]
+features = ["verbatim"]
